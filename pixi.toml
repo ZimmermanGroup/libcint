@@ -1,0 +1,20 @@
+[workspace]
+preview = ["pixi-build"]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[package]
+name = "libcint"
+version = "5.3.0"
+
+[package.build]
+backend = { name = "pixi-build-cmake", version = "*" }
+# backend = { name = "pixi-build-rattler-build", version = "*" }
+channels = [
+  "https://prefix.dev/pixi-build-backends",
+  "https://prefix.dev/conda-forge",
+]
+
+[tasks]
+
+[dependencies]
