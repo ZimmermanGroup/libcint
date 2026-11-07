@@ -260,6 +260,45 @@ k_contracted: ;
                            + l_prim * x_ctr[3] \
                            + envs->nf*3);
 
+/*
+ * Cache needed by CINT4c1e_drv: gctr (nc*n_comp), followed by either
+ * CINT4c1e_loop_nopt's buffers or the cart-to-spherical transformation.
+ * The loop reserves idx and the non0 coefficient tables, g (leng), the
+ * contraction buffers gctrl/gctrk/gctrj/gctri and gout, and then
+ * CINTg4c1e_ovlp takes 3 * b_size doubles of scratch (bufx, bufy, bufz)
+ * from what is left. The buffer sizes depend on each shell's own number
+ * of contractions, so they are counted separately rather than bounded by
+ * a multiple of nc.
+ */
+static size_t CINT4c1e_cache_size(CINTEnvVars *envs, size_t nc, FINT n_comp)
+{
+        FINT *x_ctr = envs->x_ctr;
+        FINT *bas = envs->bas;
+        FINT *shls = envs->shls;
+        size_t nf = envs->nf;
+        size_t nprim = bas(NPRIM_OF, shls[0]) + bas(NPRIM_OF, shls[1])
+                     + bas(NPRIM_OF, shls[2]) + bas(NPRIM_OF, shls[3]);
+        size_t non0 = bas(NPRIM_OF, shls[0]) * x_ctr[0]
+                    + bas(NPRIM_OF, shls[1]) * x_ctr[1]
+                    + bas(NPRIM_OF, shls[2]) * x_ctr[2]
+                    + bas(NPRIM_OF, shls[3]) * x_ctr[3];
+        /* idx and non0 tables are FINT arrays; +2 for MALLOC_INSTACK alignment */
+        size_t len_index = (nf * 3 + nprim + non0) * sizeof(FINT) / sizeof(double) + 2;
+        size_t leng = envs->g_size * 3 * ((1<<envs->gbits)+1);
+        size_t lenl = nc * n_comp;
+        size_t lenk = nf * x_ctr[0] * x_ctr[1] * x_ctr[2] * n_comp;
+        size_t lenj = nf * x_ctr[0] * x_ctr[1] * n_comp;
+        size_t leni = nf * x_ctr[0] * n_comp;
+        size_t len0 = nf * n_comp;
+        FINT nmax = envs->li_ceil + envs->lj_ceil;
+        FINT mmax = envs->lk_ceil + envs->ll_ceil;
+        size_t db = nmax + mmax + 1;
+        size_t len_ovlp = 3 * db * (MAX(nmax, mmax) + 1);
+        size_t len_loop = len_index + leng + lenl + lenk + lenj + leni + len0 + len_ovlp;
+        size_t len_c2s = nf * 32 * OF_CMPLX;
+        return nc * n_comp + 1 + MAX(len_loop, len_c2s);
+}
+
 CACHE_SIZE_T CINT4c1e_drv(double *out, FINT *dims, CINTEnvVars *envs, CINTOpt *opt,
                           double *cache, void (*f_c2s)())
 {
@@ -267,20 +306,11 @@ CACHE_SIZE_T CINT4c1e_drv(double *out, FINT *dims, CINTEnvVars *envs, CINTOpt *o
         size_t nc = envs->nf * x_ctr[0] * x_ctr[1] * x_ctr[2] * x_ctr[3];
         FINT n_comp = envs->ncomp_e1 * envs->ncomp_e2 * envs->ncomp_tensor;
         if (out == NULL) {
-                PAIRDATA_NON0IDX_SIZE(pdata_size);
-                CACHE_SIZE_T leng = envs->g_size*3*((1<<envs->gbits)+1);
-                CACHE_SIZE_T len0 = envs->nf*n_comp;
-                CACHE_SIZE_T cache_size = MAX(leng+len0+nc*n_comp*3 + pdata_size,
-                                      nc*n_comp+envs->nf*32*OF_CMPLX);
-                return cache_size;
+                return CINT4c1e_cache_size(envs, nc, n_comp);
         }
         double *stack = NULL;
         if (cache == NULL) {
-                PAIRDATA_NON0IDX_SIZE(pdata_size);
-                size_t leng = envs->g_size*3*((1<<envs->gbits)+1);
-                size_t len0 = envs->nf*n_comp;
-                size_t cache_size = MAX(leng+len0+nc*n_comp*3 + pdata_size,
-                                      nc*n_comp+envs->nf*32*OF_CMPLX);
+                size_t cache_size = CINT4c1e_cache_size(envs, nc, n_comp);
                 stack = malloc(sizeof(double)*cache_size);
                 cache = stack;
         }
